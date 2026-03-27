@@ -1,18 +1,16 @@
 local url = "https://raw.githubusercontent.com/sladkoeshkaogg-svg/TestGGOGScript/main/Main.lua"
 
-local request = (syn and syn.request) or (http and http.request) or http_request or request
+local s, res = pcall(function() 
+    return game:HttpGet(url) 
+end)
 
-if request then
-    local response = request({
-        Url = url,
-        Method = "GET"
-    })
-    if response and response.Body then
-        loadstring(response.Body)()
+if s and res then
+    local func, err = loadstring(res)
+    if func then
+        func()
     else
-        warn("Не удалось получить скрипт")
+        warn("Ошибка синтаксиса в Main.lua: " .. err)
     end
 else
-    -- fallback
-    loadstring(game:HttpGet(url))()
+    warn("Ошибка загрузки: проверь интернет или ссылку")
 end
