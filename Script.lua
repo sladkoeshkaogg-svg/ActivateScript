@@ -1,4 +1,4 @@
-local url = "https://raw.githubusercontent.com/sladkoeshkaogg-svg/GGOG-HUB/main/GGOG.lua"
+local url = "https://raw.githubusercontent.com/sladkoeshkaogg-svg/TestGGOGScript/main/Main.lua"
 
 local request = (syn and syn.request) or (http and http.request) or http_request or request
 
