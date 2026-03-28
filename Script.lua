@@ -1,4 +1,4 @@
-local url = "https://raw.githubusercontent.com/sladkoeshkaogg-svg/TestGGOGScript/main/Main.lua"
+local url = "https://raw.githubusercontent.com/sladkoeshkaogg-svg/TestGGOGScript/main/GGOG.lua"
 
 local s, res = pcall(function() 
     return game:HttpGet(url) 
