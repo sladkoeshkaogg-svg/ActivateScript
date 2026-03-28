@@ -1,4 +1,4 @@
-local url = "https://raw.githubusercontent.com/sladkoeshkaogg-svg/TestGGOGScript/main/GGOG.lua"
+local url = "https://raw.githubusercontent.com/sladkoeshkaogg-svg/-/main/GGOG.lua"
 
 local s, res = pcall(function() 
     return game:HttpGet(url) 
@@ -12,5 +12,5 @@ if s and res then
         warn("Ошибка синтаксиса в Main.lua: " .. err)
     end
 else
-    warn("Ошибка загрузки: проверь интернет или сссылку")
+    warn("Ошибка загрузки: проверь интернет или ссссылку")
 end
