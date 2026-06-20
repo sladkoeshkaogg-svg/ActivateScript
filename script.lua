@@ -1,188 +1,269 @@
-local PS = game:GetService("Players")
-local P = PS.LocalPlayer
-local RS = game:GetService("RunService")
-local RS2 = game:GetService("ReplicatedStorage")
-local WS = workspace
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
 
-local GE = RS2:WaitForChild("GrabEvents", 10)
-local SNO = GE:WaitForChild("SetNetworkOwner")
-
+-- Obsidian UI
 local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
-local Lib = loadstring(game:HttpGet(repo .. "Library.lua"))()
-local TM = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
-local SM = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 
-local W = Lib:CreateWindow({
-    Title = "Kick",
-    Icon = "skull",
-    Footer = "Kick Tool",
-    NotifySide = "Right",
-    ShowCustomCursor = false,
+local Window = Library:CreateWindow({
+    Title = "Kick Menu",
+    Footer = "Kick Menu",
+    ShowCustomCursor = true,
 })
 
-local Tab = W:AddTab("Kick", "skull")
-local Box = Tab:AddLeftGroupbox("Kick Player", "skull")
+local Tab = Window:AddTab("Main", "zap")
+local Group = Tab:AddLeftGroupbox("Kick")
 
--- ═══════════════════════════════════
--- HELPERS
--- ═══════════════════════════════════
-local function safeWait(t)
-    local s = tick()
-    repeat RS.Heartbeat:Wait() until tick() - s >= t
-end
-
-local function getBlobParts()
-    local c = P.Character
-    local hm = c and c:FindFirstChild("Humanoid")
-    local se = hm and hm.SeatPart
-    if not se or not se.Parent or se.Parent.Name ~= "CreatureBlobman" then return nil end
-    local bl = se.Parent
-    local br = bl:FindFirstChild("HumanoidRootPart") or bl.PrimaryPart
-    local so = bl:FindFirstChild("BlobmanSeatAndOwnerScript")
-    if not so then return nil end
-    local cg = so:FindFirstChild("CreatureGrab")
-    local cd = so:FindFirstChild("CreatureDrop")
-    local rd = bl:FindFirstChild("RightDetector")
-    local rw = rd and (rd:FindFirstChild("RightWeld") or rd:FindFirstChildWhichIsA("Weld"))
-    if not (cg and cd and rd and rw and br) then return nil end
-    return { br = br, cg = cg, cd = cd }
-end
-
-local function spawnAndSit()
-    local c = P.Character or P.CharacterAdded:Wait()
-    local hm = c:WaitForChild("Humanoid", 5)
-    local h = c:WaitForChild("HumanoidRootPart", 5)
-    if not hm or not h then return false end
-    if hm.SeatPart and hm.SeatPart.Parent and hm.SeatPart.Parent.Name == "CreatureBlobman" then return true end
-    pcall(function()
-        RS2.MenuToys.SpawnToyRemoteFunction:InvokeServer("CreatureBlobman", h.CFrame, Vector3.zero)
-    end)
-    safeWait(0.8)
-    local folder = WS:FindFirstChild(P.Name .. "SpawnedInToys") or WS:WaitForChild(P.Name .. "SpawnedInToys", 8)
-    if not folder then return false end
-    local blob = folder:FindFirstChild("CreatureBlobman") or folder:WaitForChild("CreatureBlobman", 8)
-    if not blob then return false end
-    local seat = blob:FindFirstChildWhichIsA("VehicleSeat", true)
-    if not seat then return false end
-    local t = tick()
-    repeat
-        h.CFrame = seat.CFrame + Vector3.new(0, 1.5, 0)
-        h.Velocity = Vector3.zero
-        seat:Sit(hm)
-        RS.Heartbeat:Wait()
-    until hm.SeatPart == seat or tick() - t > 5
-    return hm.SeatPart == seat
-end
-
--- ═══════════════════════════════════
--- PLAYER LIST
--- ═══════════════════════════════════
-local function getPlayerNames()
+-- Helpers
+local function getPlayerList()
     local list = {}
-    for _, pl in ipairs(PS:GetPlayers()) do
-        if pl ~= P then
-            table.insert(list, pl.Name)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(list, p.DisplayName .. " (" .. p.Name .. ")")
         end
     end
     return list
 end
 
--- ═══════════════════════════════════
--- UI
--- ═══════════════════════════════════
-local kicking = false
+local function getPlayerFromSelection(sel)
+    if not sel then return nil end
+    local name = sel:match("%((.-)%)")
+    return name and Players:FindFirstChild(name)
+end
+
 local selectedTarget = nil
+local kickActive = false
+local kickConn = nil
 
-Box:AddDropdown("KickTarget", {
-    Text = "Select Player",
-    Values = getPlayerNames(),
+-- Dropdown
+Group:AddDropdown("TargetDropdown", {
+    Values = getPlayerList(),
     Default = 1,
-    Searchable = true,
+    Multi = false,
+    Text = "Select Target",
     Callback = function(v)
-        selectedTarget = PS:FindFirstChild(v)
+        selectedTarget = getPlayerFromSelection(v)
     end
 })
 
-Box:AddButton({
-    Text = "🔄 Refresh List",
+-- Refresh
+Group:AddButton({
+    Text = "Refresh List",
     Func = function()
-        Lib.Options.KickTarget:SetValues(getPlayerNames())
-        Lib:Notify({ Title = "Kick", Description = "Player list refreshed", Time = 2 })
+        Library.Options.TargetDropdown:SetValues(getPlayerList())
+        Library.Options.TargetDropdown:SetValue(nil)
+        selectedTarget = nil
     end
 })
 
-Box:AddButton({
-    Text = "⚡ KICK",
-    Func = function()
-        if kicking then
-            Lib:Notify({ Title = "Kick", Description = "Already kicking!", Time = 2 })
-            return
-        end
-        if not selectedTarget or not selectedTarget.Parent then
-            Lib:Notify({ Title = "Kick", Description = "Select a player first!", Time = 3 })
-            return
-        end
+-- Auto Sit Blobman
+local function spawnBlobman()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    pcall(function()
+        ReplicatedStorage.MenuToys.SpawnToyRemoteFunction:InvokeServer(
+            "CreatureBlobman",
+            hrp.CFrame * CFrame.new(0, 5, 5),
+            Vector3.zero
+        )
+    end)
+end
 
-        kicking = true
-        Lib:Notify({ Title = "Kick", Description = "Kicking " .. selectedTarget.Name .. "...", Time = 3 })
+local function sitOnBlobman()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hum or not hrp then return end
+    if hum.SeatPart and hum.SeatPart.Parent.Name == "CreatureBlobman" then return end
 
-        task.spawn(function()
-            local ok = spawnAndSit()
-            if not ok then
-                Lib:Notify({ Title = "Kick", Description = "Failed to sit in blobman!", Time = 3 })
-                kicking = false
+    -- Ищем блобмена
+    local folder = workspace:FindFirstChild(LocalPlayer.Name .. "SpawnedInToys")
+    local blob = folder and folder:FindFirstChild("CreatureBlobman")
+
+    -- Если нет - спавним
+    if not blob then
+        spawnBlobman()
+        task.wait(1)
+        folder = workspace:FindFirstChild(LocalPlayer.Name .. "SpawnedInToys")
+        blob = folder and folder:FindFirstChild("CreatureBlobman")
+    end
+
+    if not blob then return end
+
+    local seat = blob:FindFirstChildWhichIsA("VehicleSeat", true)
+        or blob:FindFirstChildWhichIsA("Seat", true)
+    if not seat then return end
+
+    -- Телепорт к сиденью и садимся
+    local t = tick()
+    repeat
+        hrp.CFrame = seat.CFrame * CFrame.new(0, 1.5, 0)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        pcall(function() seat:Sit(hum) end)
+        RunService.Heartbeat:Wait()
+    until hum.SeatPart == seat or tick() - t > 3
+end
+
+-- Автоматический сид при старте кика
+local autoSitConn = nil
+
+local function startAutoSit()
+    if autoSitConn then autoSitConn:Disconnect() end
+    autoSitConn = RunService.Heartbeat:Connect(function()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum and (not hum.SeatPart or hum.SeatPart.Parent.Name ~= "CreatureBlobman") then
+            task.spawn(sitOnBlobman)
+        end
+    end)
+end
+
+local function stopAutoSit()
+    if autoSitConn then
+        autoSitConn:Disconnect()
+        autoSitConn = nil
+    end
+end
+
+-- KICK (без анчора, быстрый, через blob)
+local function startKick()
+    task.spawn(function()
+        local GE = ReplicatedStorage:WaitForChild("GrabEvents")
+        local throttle = 0
+
+        kickConn = RunService.Heartbeat:Connect(function()
+            if not kickActive then return end
+
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local seat = hum and hum.SeatPart
+            local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+
+            -- Проверяем что сидим на блобе
+            if not seat or seat.Parent.Name ~= "CreatureBlobman" then return end
+            if not myRoot then return end
+
+            local blob = seat.Parent
+            local blobRoot = blob:FindFirstChild("HumanoidRootPart") or blob.PrimaryPart
+            local scriptObj = blob:FindFirstChild("BlobmanSeatAndOwnerScript")
+            local CG = scriptObj and scriptObj:FindFirstChild("CreatureGrab")
+            local CD = scriptObj and scriptObj:FindFirstChild("CreatureDrop")
+            local RDet = blob:FindFirstChild("RightDetector")
+            local LDet = blob:FindFirstChild("LeftDetector")
+            local RWeld = RDet and (RDet:FindFirstChild("RightWeld") or RDet:FindFirstChildWhichIsA("Weld"))
+            local LWeld = LDet and (LDet:FindFirstChild("LeftWeld") or LDet:FindFirstChildWhichIsA("Weld"))
+
+            if not (CG and CD and RDet and LDet and blobRoot) then return end
+
+            local target = selectedTarget
+            if not target or not target.Parent then return end
+
+            local tChar = target.Character
+            local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+            local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+
+            if not (tRoot and tHum and tHum.Health > 0) then return end
+
+            -- Throttle
+            if tick() - throttle < 0.03 then return end
+            throttle = tick()
+
+            -- Стабилизация цели (БЕЗ анчора)
+            tRoot.AssemblyLinearVelocity = Vector3.zero
+            tRoot.AssemblyAngularVelocity = Vector3.zero
+
+            -- Быстрый dual grab/drop
+            pcall(function()
+                -- Правая рука
+                CG:FireServer(RDet, tRoot, RWeld)
+                task.wait(0.02)
+                local rw = RDet:FindFirstChild("RightWeld") or RDet:FindFirstChildWhichIsA("Weld")
+                if rw then CD:FireServer(rw) end
+
+                -- Левая рука
+                CG:FireServer(LDet, tRoot, LWeld)
+                task.wait(0.02)
+                local lw = LDet:FindFirstChild("LeftWeld") or LDet:FindFirstChildWhichIsA("Weld")
+                if lw then CD:FireServer(lw) end
+
+                -- Дабл
+                CG:FireServer(RDet, tRoot, RWeld)
+                CG:FireServer(LDet, tRoot, LWeld)
+                task.wait(0.02)
+                rw = RDet:FindFirstChild("RightWeld") or RDet:FindFirstChildWhichIsA("Weld")
+                lw = LDet:FindFirstChild("LeftWeld") or LDet:FindFirstChildWhichIsA("Weld")
+                if rw then CD:FireServer(rw) end
+                if lw then CD:FireServer(lw) end
+
+                -- GrabEvents
+                GE.SetNetworkOwner:FireServer(tRoot, blobRoot.CFrame)
+                GE.CreateGrabLine:FireServer(tRoot, Vector3.zero, tRoot.Position, false)
+                task.wait(0.02)
+                GE.DestroyGrabLine:FireServer(tRoot)
+            end)
+        end)
+    end)
+end
+
+local function stopKick()
+    if kickConn then
+        kickConn:Disconnect()
+        kickConn = nil
+    end
+end
+
+-- Main Toggle
+Group:AddToggle("KickToggle", {
+    Text = "Kick (Blob + Fast)",
+    Default = false,
+    Callback = function(on)
+        kickActive = on
+        if on then
+            if not selectedTarget then
+                Library:Notify({
+                    Title = "Error",
+                    Description = "Select a target first!",
+                    Time = 3
+                })
+                Library.Toggles.KickToggle:SetValue(false)
                 return
             end
-            safeWait(0.3)
-
-            while kicking do
-                local char = selectedTarget and selectedTarget.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                local hum = char and char:FindFirstChildOfClass("Humanoid")
-
-                if not hrp or not hum or hum.Health <= 0 or not selectedTarget.Parent then
-                    kicking = false
-                    Lib:Notify({ Title = "Kick", Description = "Target left or died", Time = 3 })
-                    break
-                end
-
-                local bp = getBlobParts()
-                if not bp then kicking = false break end
-
-                -- ТП блобмена к цели
-                pcall(function() SNO:FireServer(bp.br) end)
-                bp.br.CFrame = hrp.CFrame * CFrame.new(0, 0, 2)
-                bp.br.Velocity = Vector3.zero
-
-                -- Максимально быстрые хваты
-                for i = 1, 8 do
-                    pcall(function() SNO:FireServer(hrp) end)
-                    pcall(function() bp.cg:FireServer(hrp) end)
-                    pcall(function() bp.cd:FireServer() end)
-                end
-
-                RS.Heartbeat:Wait()
-            end
-
-            kicking = false
-        end)
+            -- Сначала садимся на блоба
+            task.spawn(function()
+                sitOnBlobman()
+                task.wait(0.5)
+                startAutoSit()
+                startKick()
+            end)
+        else
+            stopKick()
+            stopAutoSit()
+        end
     end
 })
 
-Box:AddButton({
-    Text = "⏹ STOP",
-    Func = function()
-        kicking = false
-        Lib:Notify({ Title = "Kick", Description = "Stopped", Time = 2 })
-    end
+-- UI Settings
+local UITab = Window:AddTab("UI Settings", "settings")
+local MenuGroup = UITab:AddLeftGroupbox("Menu")
+
+MenuGroup:AddButton("Unload", function()
+    Library:Unload()
+end)
+
+MenuGroup:AddLabel("Menu Keybind"):AddKeyPicker("MenuKeybind", {
+    Default = "RightShift",
+    NoUI = true,
+    Text = "Menu keybind"
 })
 
-TM:SetLibrary(Lib)
-SM:SetLibrary(Lib)
-SM:SetFolder("KickTool")
-
-local UITab = W:AddTab("UI", "settings")
-local UILeft = UITab:AddLeftGroupbox("Theme", "palette")
-local UIRight = UITab:AddRightGroupbox("Save", "save")
-TM:BuildMenu(UILeft)
-SM:BuildMenu(UIRight)
+Library.ToggleKeybind = Library.Options.MenuKeybind
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+ThemeManager:SetFolder("KickMenu")
+SaveManager:SetFolder("KickMenu/Configs")
+ThemeManager:ApplyToTab(UITab)
